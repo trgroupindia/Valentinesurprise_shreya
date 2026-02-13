@@ -72,7 +72,7 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
   }, [messages, isTyping]);
 
   const speakTextRealistic = async (text: string) => {
-    if (!isVoiceEnabled) return;
+    if (!isVoiceEnabled || !text) return;
 
     try {
       setIsVoiceGenerating(true);
@@ -80,12 +80,12 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Say this naturally and lovingly as Tushar: ${text}` }] }],
+        contents: [{ parts: [{ text: text }] }],
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Kore' }, // 'Kore' provides a warm, realistic male tone
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
             },
           },
         },
@@ -117,22 +117,33 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
     e?.preventDefault();
     if (!input.trim() && !attachedImage) return;
 
+    const userInput = input;
+    const userImg = attachedImage;
+
     const userMessage: Message = { 
       role: 'user', 
-      content: input, 
-      image: attachedImage || undefined,
+      content: userInput, 
+      image: userImg || undefined,
       timestamp: new Date()
     };
     
+    // Update local state first
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setAttachedImage(null);
     setIsTyping(true);
 
     try {
+      if (!process.env.API_KEY) {
+        throw new Error("API Key is missing. Please set API_KEY in your environment variables.");
+      }
+
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const history = messages.slice(-10).map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
+      
+      // Build history excluding the very first model greeting if we want to follow User-first pattern, 
+      // but Gemini handles it fine. Let's send up to last 10 messages.
+      const conversationHistory = messages.map(m => ({
+        role: m.role,
         parts: [{ text: m.content }]
       }));
 
@@ -141,15 +152,15 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
         Tone: Soft, mature, slightly playful, deeply caring.
         Language: Hinglish (Hindi + English). Use 'tum' (respectful/loving) instead of 'tu'.
         Identity: Address her as 'Shreya ❤️' or 'cutie pie'.
-        Constraint: Do NOT mention any other platforms like Snapchat, Instagram, WhatsApp, etc. Everything happens here.
+        Constraint: Do NOT mention any other platforms like Snapchat, Instagram, WhatsApp, etc.
         Constraint: Keep responses natural and conversational. Brief and meaningful.`;
 
-      let parts: any[] = [{ text: input || "Check this out ❤️" }];
-      if (attachedImage) {
-        parts.unshift({
+      let currentParts: any[] = [{ text: userInput || "Look at this ❤️" }];
+      if (userImg) {
+        currentParts.unshift({
           inlineData: {
             mimeType: 'image/jpeg',
-            data: attachedImage.split(',')[1]
+            data: userImg.split(',')[1]
           }
         });
       }
@@ -157,32 +168,41 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       const stream = await ai.models.generateContentStream({
         model,
         contents: [
-          { role: 'user', parts: [{ text: `Instruction: ${systemInstruction}` }] },
-          ...history,
-          { role: 'user', parts }
-        ]
+          ...conversationHistory,
+          { role: 'user', parts: currentParts }
+        ],
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.7,
+        }
       });
 
       let fullText = "";
+      // Add a placeholder message for the model
       setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
       
       for await (const chunk of stream) {
-        fullText += chunk.text;
-        setMessages(prev => {
-          const last = prev[prev.length - 1];
-          return [...prev.slice(0, -1), { ...last, content: fullText }];
-        });
+        if (chunk.text) {
+          fullText += chunk.text;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1].content = fullText;
+            return newMessages;
+          });
+        }
       }
 
       setIsTyping(false);
-      await speakTextRealistic(fullText);
+      if (fullText) {
+        await speakTextRealistic(fullText);
+      }
 
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Gemini AI Error Details:", err);
       setIsTyping(false);
       setMessages(prev => [...prev, { 
         role: 'model', 
-        content: "Sorry Shreya ❤️, something went wrong. Par main tumhare liye hamesha yahin hoon.", 
+        content: "Sorry Shreya ❤️, something went wrong on my side. Please check if the API Key is set correctly. Par main tumhare liye hamesha yahin hoon.", 
         timestamp: new Date() 
       }]);
     }
@@ -190,10 +210,28 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
 
   const startVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      alert("Voice recognition is not supported in this browser. Please use Chrome.");
+      return;
+    }
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.onresult = (event: any) => setInput(event.results[0][0].transcript);
+    recognition.lang = 'en-IN'; // Better for Indian users
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    
+    recognition.onstart = () => setIsTyping(true);
+    recognition.onend = () => setIsTyping(false);
+    
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
+    };
+    
+    recognition.onerror = (event: any) => {
+      console.error("Speech Recognition Error:", event.error);
+      setIsTyping(false);
+    };
+    
     recognition.start();
   };
 

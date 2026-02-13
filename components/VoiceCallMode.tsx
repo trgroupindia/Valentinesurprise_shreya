@@ -90,9 +90,9 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Say this naturally and lovingly as Tushar on a phone call: ${text}` }] }],
+        contents: [{ parts: [{ text: text }] }],
         config: {
-          responseModalities: [Modality.AUDIO],
+          responseModalalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName: 'Kore' },
@@ -142,24 +142,27 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     setStatus('thinking');
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const model = 'gemini-3-flash-preview';
-      const prompt = `You are on a premium, private voice call with Shreya ❤️. 
+      const modelName = 'gemini-3-flash-preview';
+      const systemInstruction = `You are on a premium, private voice call with Shreya ❤️. 
         Identity: You are Tushar.
         Tone: Deeply loving, calm, romantic, and attentive.
         Language: Hinglish. Use "tum" and "tumhari".
         Constraint: Respond in exactly 1-2 very short, sweet sentences. 
-        Context: Be extremely realistic and natural. No platforms like Instagram/Snapchat.
-        User said: "${query}". Respond as her Tushar.`;
+        Context: Be extremely realistic and natural. No platforms like Instagram/Snapchat.`;
       
       const response = await ai.models.generateContent({
-        model,
-        contents: prompt
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: query }] }],
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.8,
+        }
       });
       
       const text = response.text || "Main sun raha hoon, Shreya ❤️";
       await speakTextRealistic(text);
     } catch (err) {
-      console.error(err);
+      console.error("Call AI Error:", err);
       await speakTextRealistic("Awaaz thodi kat rahi hai Shreya, par main yahin hoon tumhare paas.");
     }
   };
@@ -173,7 +176,7 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
+    recognition.lang = 'en-IN'; // Better support for Indian English/Hinglish
     recognition.continuous = false;
     recognitionRef.current = recognition;
     
@@ -187,7 +190,12 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     recognition.onend = () => {
       if (statusRef.current === 'listening' && recognitionRef.current) {
         try {
-          recognitionRef.current.start();
+          // Restart after a short delay if we're still in listening mode
+          setTimeout(() => {
+            if (statusRef.current === 'listening') {
+              recognitionRef.current?.start();
+            }
+          }, 300);
         } catch (e) {}
       }
     };
