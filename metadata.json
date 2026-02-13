@@ -1,0 +1,7 @@
+{
+  "name": "Valentine's For Shreya",
+  "description": "A premium, cinematic Valentine-themed landing page with smooth animations, memory gallery, and a magical surprise.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
