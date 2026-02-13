@@ -92,7 +92,7 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
         model: "gemini-2.5-flash-preview-tts",
         contents: [{ parts: [{ text: text }] }],
         config: {
-          responseModalalities: [Modality.AUDIO],
+          responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName: 'Kore' },
@@ -126,7 +126,7 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
           startListening();
       }
     } catch (error) {
-      console.error("Call TTS Error:", error);
+      console.error("Voice Output Error:", error);
       setStatus('listening');
       startListening();
     }
@@ -142,7 +142,6 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     setStatus('thinking');
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const modelName = 'gemini-3-flash-preview';
       const systemInstruction = `You are on a premium, private voice call with Shreya ❤️. 
         Identity: You are Tushar.
         Tone: Deeply loving, calm, romantic, and attentive.
@@ -150,15 +149,12 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
         Constraint: Respond in exactly 1-2 very short, sweet sentences. 
         Context: Be extremely realistic and natural. No platforms like Instagram/Snapchat.`;
       
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: [{ role: 'user', parts: [{ text: query }] }],
-        config: {
-          systemInstruction: systemInstruction,
-          temperature: 0.8,
-        }
+      const chat = ai.chats.create({
+        model: 'gemini-3-flash-preview',
+        config: { systemInstruction }
       });
       
+      const response = await chat.sendMessage({ message: query });
       const text = response.text || "Main sun raha hoon, Shreya ❤️";
       await speakTextRealistic(text);
     } catch (err) {
@@ -176,7 +172,7 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-IN'; // Better support for Indian English/Hinglish
+    recognition.lang = 'hi-IN'; // Better Hinglish support
     recognition.continuous = false;
     recognitionRef.current = recognition;
     
@@ -190,12 +186,11 @@ export const VoiceCallMode: React.FC<VoiceCallModeProps> = ({ onClose }) => {
     recognition.onend = () => {
       if (statusRef.current === 'listening' && recognitionRef.current) {
         try {
-          // Restart after a short delay if we're still in listening mode
           setTimeout(() => {
             if (statusRef.current === 'listening') {
               recognitionRef.current?.start();
             }
-          }, 300);
+          }, 500);
         } catch (e) {}
       }
     };

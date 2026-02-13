@@ -107,7 +107,7 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
         source.start();
       }
     } catch (error) {
-      console.error("Realistic TTS Error:", error);
+      console.error("TTS Error:", error);
     } finally {
       setIsVoiceGenerating(false);
     }
@@ -133,19 +133,22 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
     setIsTyping(true);
 
     try {
+      if (!process.env.API_KEY) {
+        throw new Error("API Key Missing! Please add 'API_KEY' to your Vercel Environment Variables.");
+      }
+
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // CRITICAL FIX: The Gemini API requires the conversation to START with a 'user' turn.
-      // We skip the initial model greeting if it's the very first message.
-      const validHistory = messages
-        .filter((m, idx) => !(idx === 0 && m.role === 'model')) // Skip first greeting from history
-        .filter(m => !m.content.includes("Sorry Shreya")) // Skip previous error messages
+      // Filter history to ensure it's valid and starts with User
+      // Gemini Chat history needs to be role 'user' and 'model' alternating
+      const chatHistory = messages
+        .filter((m, idx) => !(idx === 0 && m.role === 'model')) // Skip first model greeting for cleaner start
+        .filter(m => !m.content.includes("Sorry Shreya")) // Remove previous error messages
         .map(m => ({
           role: m.role,
           parts: [{ text: m.content }]
         }));
 
-      const model = 'gemini-3-flash-preview';
       const systemInstruction = `You are Tushar AI, a private, caring digital version of Tushar for Shreya.
         Tone: Soft, mature, slightly playful, deeply caring.
         Language: Hinglish (Hindi + English). Use 'tum' (respectful/loving) instead of 'tu'.
@@ -153,53 +156,63 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
         Constraint: Do NOT mention any other platforms like Snapchat, Instagram, WhatsApp, etc.
         Constraint: Keep responses natural and conversational. Brief and meaningful.`;
 
-      let currentParts: any[] = [{ text: userInput || "Look at this ❤️" }];
-      if (userImg) {
-        currentParts.unshift({
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: userImg.split(',')[1]
-          }
-        });
-      }
-
-      const stream = await ai.models.generateContentStream({
-        model,
-        contents: [
-          ...validHistory,
-          { role: 'user', parts: currentParts }
-        ],
-        config: {
-          systemInstruction: systemInstruction,
-          temperature: 0.7,
-        }
+      const chat = ai.chats.create({
+        model: 'gemini-3-flash-preview',
+        config: { systemInstruction },
+        history: chatHistory
       });
 
-      let fullText = "";
-      setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
+      let responseText = "";
       
+      // If there is an image, we send it as a standalone content first or as the message
+      let stream;
+      if (userImg) {
+        // Multi-modal message with image
+        stream = await chat.sendMessageStream({
+          message: [
+            { text: userInput || "Look at this ❤️" },
+            { 
+              inlineData: { 
+                mimeType: "image/jpeg", 
+                data: userImg.split(',')[1] 
+              } 
+            }
+          ]
+        });
+      } else {
+        stream = await chat.sendMessageStream({ message: userInput });
+      }
+
+      // Add placeholder for model response
+      setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
+
       for await (const chunk of stream) {
         if (chunk.text) {
-          fullText += chunk.text;
+          responseText += chunk.text;
           setMessages(prev => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1].content = fullText;
-            return newMessages;
+            const updated = [...prev];
+            updated[updated.length - 1].content = responseText;
+            return updated;
           });
         }
       }
 
       setIsTyping(false);
-      if (fullText) {
-        await speakTextRealistic(fullText);
+      if (responseText) {
+        await speakTextRealistic(responseText);
       }
 
     } catch (err: any) {
-      console.error("Gemini AI Error:", err);
+      console.error("Full AI Error:", err);
       setIsTyping(false);
+      
+      const errorText = err.message?.includes("API Key") 
+        ? "Shreya ❤️, API Key missing lag rahi hai setup mein. Please Tushar ko bolo fix karne."
+        : "Sorry Shreya ❤️, mere side pe thoda issue aa gaya. Par main hamesha tumhare liye yahin hoon.";
+
       setMessages(prev => [...prev, { 
         role: 'model', 
-        content: "Sorry Shreya ❤️, mere side pe thoda issue aa gaya. Par ghabrao mat, main hamesha tumhare liye yahin hoon.", 
+        content: errorText, 
         timestamp: new Date() 
       }]);
     }
@@ -208,20 +221,22 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
   const startVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Voice recognition is not supported in this browser.");
+      alert("Voice input is not supported on this browser. Try Chrome.");
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.lang = 'hi-IN'; // Optimized for Shreya (Hindi/English mix)
+    recognition.lang = 'hi-IN'; // Better for Shreya's Hinglish
     recognition.continuous = false;
     recognition.interimResults = false;
+    
+    recognition.onstart = () => setIsTyping(true);
+    recognition.onend = () => setIsTyping(false);
     
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setInput(transcript);
     };
     
-    recognition.onerror = () => setIsTyping(false);
     recognition.start();
   };
 
