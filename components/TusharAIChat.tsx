@@ -127,25 +127,23 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       timestamp: new Date()
     };
     
-    // Update local state first
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setAttachedImage(null);
     setIsTyping(true);
 
     try {
-      if (!process.env.API_KEY) {
-        throw new Error("API Key is missing. Please set API_KEY in your environment variables.");
-      }
-
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
-      // Build history excluding the very first model greeting if we want to follow User-first pattern, 
-      // but Gemini handles it fine. Let's send up to last 10 messages.
-      const conversationHistory = messages.map(m => ({
-        role: m.role,
-        parts: [{ text: m.content }]
-      }));
+      // CRITICAL FIX: The Gemini API requires the conversation to START with a 'user' turn.
+      // We skip the initial model greeting if it's the very first message.
+      const validHistory = messages
+        .filter((m, idx) => !(idx === 0 && m.role === 'model')) // Skip first greeting from history
+        .filter(m => !m.content.includes("Sorry Shreya")) // Skip previous error messages
+        .map(m => ({
+          role: m.role,
+          parts: [{ text: m.content }]
+        }));
 
       const model = 'gemini-3-flash-preview';
       const systemInstruction = `You are Tushar AI, a private, caring digital version of Tushar for Shreya.
@@ -168,7 +166,7 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       const stream = await ai.models.generateContentStream({
         model,
         contents: [
-          ...conversationHistory,
+          ...validHistory,
           { role: 'user', parts: currentParts }
         ],
         config: {
@@ -178,7 +176,6 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       });
 
       let fullText = "";
-      // Add a placeholder message for the model
       setMessages(prev => [...prev, { role: 'model', content: '', timestamp: new Date() }]);
       
       for await (const chunk of stream) {
@@ -198,11 +195,11 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
       }
 
     } catch (err: any) {
-      console.error("Gemini AI Error Details:", err);
+      console.error("Gemini AI Error:", err);
       setIsTyping(false);
       setMessages(prev => [...prev, { 
         role: 'model', 
-        content: "Sorry Shreya ❤️, something went wrong on my side. Please check if the API Key is set correctly. Par main tumhare liye hamesha yahin hoon.", 
+        content: "Sorry Shreya ❤️, mere side pe thoda issue aa gaya. Par ghabrao mat, main hamesha tumhare liye yahin hoon.", 
         timestamp: new Date() 
       }]);
     }
@@ -211,27 +208,20 @@ export const TusharAIChat: React.FC<TusharAIChatProps> = ({ onToggleLetter }) =>
   const startVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Voice recognition is not supported in this browser. Please use Chrome.");
+      alert("Voice recognition is not supported in this browser.");
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.lang = 'en-IN'; // Better for Indian users
+    recognition.lang = 'hi-IN'; // Optimized for Shreya (Hindi/English mix)
     recognition.continuous = false;
     recognition.interimResults = false;
-    
-    recognition.onstart = () => setIsTyping(true);
-    recognition.onend = () => setIsTyping(false);
     
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setInput(transcript);
     };
     
-    recognition.onerror = (event: any) => {
-      console.error("Speech Recognition Error:", event.error);
-      setIsTyping(false);
-    };
-    
+    recognition.onerror = () => setIsTyping(false);
     recognition.start();
   };
 
